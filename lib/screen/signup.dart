@@ -1,32 +1,39 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({Key? key}) : super(key: key);
 
   @override
-  State<SignupScreen> createState() => _RegistroScreenState();
+  State<SignupScreen> createState() => _SignupScreenState();
 }
 
-class _RegistroScreenState extends State<SignupScreen> {
-  final TextEditingController _fechaController = TextEditingController();
+class _SignupScreenState extends State<SignupScreen> {
   final _formKey = GlobalKey<FormState>();
+
   final _emailController = TextEditingController();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _fechaController = TextEditingController();
+
+  bool _obscurePassword = true;
   DateTime? _fechaUltimoPeriodo;
+  bool _isLoading = false;
 
   @override
   void dispose() {
     _emailController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
+    _fechaController.dispose();
     super.dispose();
   }
 
-  void _seleccionarFechaPeriodo() async {
+  Future<void> _seleccionarFechaPeriodo() async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: DateTime.now(),
+      initialDate: _fechaUltimoPeriodo ?? DateTime.now(),
       firstDate: DateTime(2000),
       lastDate: DateTime.now(),
       locale: const Locale('es', 'ES'),
@@ -34,33 +41,89 @@ class _RegistroScreenState extends State<SignupScreen> {
     if (picked != null && picked != _fechaUltimoPeriodo) {
       setState(() {
         _fechaUltimoPeriodo = picked;
+        _fechaController.text =
+            "${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}";
       });
     }
   }
 
-  void _handleRegistro() {
-    if (_emailController.text.isNotEmpty &&
-        _usernameController.text.isNotEmpty &&
-        _passwordController.text.isNotEmpty &&
-        _fechaUltimoPeriodo != null) {
+  Future<void> _handleRegistro() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    if (_fechaUltimoPeriodo == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Selecciona la fecha del último periodo'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // Registrar usuario con email y password en Firebase Auth
+      UserCredential userCredential =
+          await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+
+      // Guardar datos adicionales en Firestore (por ejemplo en colección 'users')
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userCredential.user!.uid)
+          .set({
+        'username': _usernameController.text.trim(),
+        'email': _emailController.text.trim(),
+        'fechaUltimoPeriodo': _fechaUltimoPeriodo,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('¡Registro exitoso!'),
           backgroundColor: Colors.green,
         ),
       );
-    } else {
+
+      // Navegar a login o home
+      Navigator.pushReplacementNamed(context, '/login');
+    } on FirebaseAuthException catch (e) {
+      String message = 'Error en el registro';
+      if (e.code == 'email-already-in-use') {
+        message = 'El correo ya está en uso.';
+      } else if (e.code == 'weak-password') {
+        message = 'La contraseña es muy débil.';
+      } else if (e.code == 'invalid-email') {
+        message = 'Correo inválido.';
+      }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Por favor completa todos los campos'),
+        SnackBar(
+          content: Text(message),
           backgroundColor: Colors.red,
         ),
       );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error inesperado: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
   void _navigateToLogin() {
-    // Navega a la ruta '/login' definida en tu main.dart
     Navigator.pushReplacementNamed(context, '/login');
   }
 
@@ -71,12 +134,12 @@ class _RegistroScreenState extends State<SignupScreen> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24.0),
+            padding: const EdgeInsets.all(24),
             child: Container(
-              padding: const EdgeInsets.all(32.0),
+              padding: const EdgeInsets.all(32),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(24.0),
+                borderRadius: BorderRadius.circular(24),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.1),
@@ -115,6 +178,16 @@ class _RegistroScreenState extends State<SignupScreen> {
                     TextFormField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Por favor ingresa un correo electrónico';
+                        }
+                        final emailRegex = RegExp(r'^[^@]+@[^@]+\.[^@]+');
+                        if (!emailRegex.hasMatch(value)) {
+                          return 'Correo inválido';
+                        }
+                        return null;
+                      },
                       decoration: InputDecoration(
                         hintText: 'ejemplo@correo.com',
                         hintStyle: TextStyle(color: Colors.grey[400]),
@@ -161,6 +234,12 @@ class _RegistroScreenState extends State<SignupScreen> {
                     const SizedBox(height: 8),
                     TextFormField(
                       controller: _usernameController,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Por favor ingresa un nombre de usuario';
+                        }
+                        return null;
+                      },
                       decoration: InputDecoration(
                         hintText: 'Tu nombre de usuario',
                         hintStyle: TextStyle(color: Colors.grey[400]),
@@ -207,7 +286,16 @@ class _RegistroScreenState extends State<SignupScreen> {
                     const SizedBox(height: 8),
                     TextFormField(
                       controller: _passwordController,
-                      obscureText: true,
+                      obscureText: _obscurePassword,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Por favor ingresa una contraseña';
+                        }
+                        if (value.length < 6) {
+                          return 'La contraseña debe tener al menos 6 caracteres';
+                        }
+                        return null;
+                      },
                       decoration: InputDecoration(
                         hintText: 'Elige una contraseña',
                         hintStyle: TextStyle(color: Colors.grey[400]),
@@ -238,10 +326,24 @@ class _RegistroScreenState extends State<SignupScreen> {
                           horizontal: 16,
                           vertical: 16,
                         ),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscurePassword
+                                ? Icons.visibility
+                                : Icons.visibility_off,
+                            color: const Color(0xFF8B4A4A),
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _obscurePassword = !_obscurePassword;
+                            });
+                          },
+                        ),
                       ),
                     ),
                     const SizedBox(height: 24),
 
+                    // Último periodo/menstruación
                     const Text(
                       'Último periodo/menstruación',
                       style: TextStyle(
@@ -255,6 +357,12 @@ class _RegistroScreenState extends State<SignupScreen> {
                       controller: _fechaController,
                       readOnly: true,
                       onTap: _seleccionarFechaPeriodo,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Selecciona la fecha del último periodo';
+                        }
+                        return null;
+                      },
                       decoration: InputDecoration(
                         hintText: 'Selecciona una fecha',
                         hintStyle: TextStyle(color: Colors.grey[400]),
@@ -277,7 +385,7 @@ class _RegistroScreenState extends State<SignupScreen> {
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide: const BorderSide(
-                            color: Color.fromARGB(255, 139, 74, 123),
+                            color: Color(0xFF8B4A4A),
                             width: 2,
                           ),
                         ),
@@ -293,29 +401,30 @@ class _RegistroScreenState extends State<SignupScreen> {
                     ),
                     const SizedBox(height: 40),
 
-                    // Botón de registro
-                    ElevatedButton(
-                      onPressed: _handleRegistro,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF8B4A6B),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 2,
-                      ),
-                      child: const Text(
-                        'Registrarse',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
+                    _isLoading
+                        ? const Center(child: CircularProgressIndicator())
+                        : ElevatedButton(
+                            onPressed: _handleRegistro,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF8B4A6B),
+                              foregroundColor: Colors.white,
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 2,
+                            ),
+                            child: const Text(
+                              'Registrarse',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
                     const SizedBox(height: 24),
 
-                    // Ir a login
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [

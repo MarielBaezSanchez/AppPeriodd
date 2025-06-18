@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "346445981396",
+    "project_id": "calma360-2e792",
+    "storage_bucket": "calma360-2e792.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:346445981396:android:f4cc0e088d12875cf9bd41",
+        "android_client_info": {
+          "package_name": "com.marielbaez.calma360"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDCTVA9TnrshESvJMZbZz8wqaSTvVQ5uTw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

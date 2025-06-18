@@ -1,5 +1,7 @@
+import 'package:calma360/period_service.dart';
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
+
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -12,19 +14,58 @@ class _HomeScreenState extends State<HomeScreen> {
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
 
-  final List<DateTime> periodoDias = [
-    DateTime.utc(2025, 5, 24),
-    DateTime.utc(2025, 5, 25),
-    DateTime.utc(2025, 5, 26),
-    DateTime.utc(2025, 5, 27),
+  List<DateTime> periodoDias = [];
+
+  final Map<DateTime, String> estadosDeAnimo = {};
+  final Map<DateTime, List<String>> sintomasPorDia = {};
+
+  final List<String> sintomasDisponibles = [
+    'Alteración del sueño',
+    'Cambios de humor',
+    'Dolor pélvico',
+    'Acné',
+    'Alteración del apetito',
+    'Bochornos',
+    'Caída del cabello',
+    'Cólicos',
+    'Diarrea',
+    'Distensión abdominal',
+    'Dolor de cabeza',
+    'Dolor de espalda baja',
+    'Dolor en los senos',
+    'Escalofríos',
+    'Estreñimiento',
   ];
 
-  final Map<DateTime, String> estadosDeAnimo = {
-    DateTime.utc(2025, 5, 24): "😐",
-    DateTime.utc(2025, 5, 25): "😢",
-    DateTime.utc(2025, 5, 26): "🙂",
-    DateTime.utc(2025, 5, 27): "😄",
-  };
+  final PeriodService _periodService = PeriodService();
+
+  @override
+  void initState() {
+    super.initState();
+    _periodService.initNotifications();
+    _cargarDatosPrevios();
+    final hoy = DateTime.now();
+    if (_esDiaDePeriodo(hoy)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _mostrarDialogoEstadoYSintomas(hoy);
+      });
+    }
+  }
+
+  Future<void> _cargarDatosPrevios() async {
+    DateTime? lastPeriodDate = await _periodService.getLastPeriodDate();
+    if (lastPeriodDate != null) {
+      // Genera periodoDias para mostrar en calendario: 7 días desde lastPeriodDate
+      periodoDias = List.generate(7, (index) => lastPeriodDate.add(Duration(days: index)));
+      List<int> cycleLengths = await _periodService.getCycleLengths();
+      double averageCycleLength = _periodService.getAverageCycleLength(cycleLengths);
+      DateTime? nextPeriodDate = _periodService.predictNextPeriodDate(lastPeriodDate, averageCycleLength);
+      if (nextPeriodDate != null) {
+        await _periodService.schedulePeriodNotifications(nextPeriodDate);
+      }
+    }
+    setState(() {});
+  }
 
   bool _esDiaDePeriodo(DateTime day) {
     return periodoDias.any((d) =>
@@ -33,13 +74,125 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String? _estadoDeAnimoDelDia(DateTime day) {
     for (var entry in estadosDeAnimo.entries) {
-      if (entry.key.year == day.year &&
-          entry.key.month == day.month &&
-          entry.key.day == day.day) {
-        return entry.value;
-      }
+      if (_esMismoDia(entry.key, day)) return entry.value;
     }
     return null;
+  }
+
+  bool _esMismoDia(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  void _mostrarDialogoEstadoYSintomas(DateTime dia) {
+    String? estadoSeleccionado = _estadoDeAnimoDelDia(dia);
+    List<String> sintomasSeleccionados = sintomasPorDia[dia]?.toList() ?? [];
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              scrollable: true,
+              title: Text('¿Cómo te sientes hoy? (${dia.day}/${dia.month})'),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Selecciona tu estado de ánimo:'),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 10,
+                      children: ['😢', '😐', '🙂', '😄'].map((emoji) {
+                        return GestureDetector(
+                          onTap: () {
+                            setDialogState(() {
+                              estadoSeleccionado = emoji;
+                            });
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: estadoSeleccionado == emoji
+                                  ? Colors.pink[100]
+                                  : Colors.grey[100],
+                              border: Border.all(
+                                color: estadoSeleccionado == emoji
+                                    ? Colors.pink
+                                    : Colors.grey,
+                                width: 2,
+                              ),
+                            ),
+                            child: Text(emoji, style: const TextStyle(fontSize: 32)),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('Selecciona los síntomas que presentas:'),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: sintomasDisponibles.map((sintoma) {
+                        final estaSeleccionado = sintomasSeleccionados.contains(sintoma);
+                        return FilterChip(
+                          label: Text(sintoma),
+                          selected: estaSeleccionado,
+                          onSelected: (valor) {
+                            setDialogState(() {
+                              if (valor) {
+                                sintomasSeleccionados.add(sintoma);
+                              } else {
+                                sintomasSeleccionados.remove(sintoma);
+                              }
+                            });
+                          },
+                          selectedColor: Colors.pink[100],
+                          checkmarkColor: Colors.pink[800],
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  child: const Text('Cancelar'),
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                  },
+                ),
+                TextButton(
+                  child: const Text('Guardar'),
+                  onPressed: () async {
+                    setState(() {
+                      if (estadoSeleccionado != null) {
+                        estadosDeAnimo[dia] = estadoSeleccionado!;
+                      }
+                      sintomasPorDia[dia] = sintomasSeleccionados;
+                    });
+
+                    // Guardar último periodo y duración promedio del ciclo localmente
+                    await _periodService.saveLastPeriodDate(dia);
+                    // Actualiza la lista de duración del ciclo con ejemplo fijo, ajusta a lógica real cuando tengas múltiple historial
+                    await _periodService.saveCycleLengths([28]); 
+
+                    await _cargarDatosPrevios(); // Refresca notificaciones
+
+                    Navigator.of(context).pop();
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -47,11 +200,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final ancho = MediaQuery.of(context).size.width;
     final alto = MediaQuery.of(context).size.height;
 
-    // def tipos de dispositivo
     final bool esSmartwatch = ancho <= 400 && alto <= 500;
     final bool esTV = ancho >= 1000 && alto >= 600;
 
-    // config responsiva
     double rowHeight = esSmartwatch ? 28 : esTV ? 60 : 40;
     double daysOfWeekHeight = esSmartwatch ? 18 : esTV ? 30 : 20;
     double headerFontSize = esSmartwatch ? 12 : esTV ? 24 : 16;
@@ -62,24 +213,22 @@ class _HomeScreenState extends State<HomeScreen> {
     double paddingAll = esSmartwatch ? 8 : esTV ? 24 : 16;
     double? toolbarH = esSmartwatch ? 30 : esTV ? 80 : null;
 
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Calendario Menstrual'),
         backgroundColor: Colors.pinkAccent,
         toolbarHeight: toolbarH,
-        titleTextStyle: TextStyle(fontSize: headerFontSize, fontWeight: FontWeight.bold),
+        titleTextStyle:
+            TextStyle(fontSize: headerFontSize, fontWeight: FontWeight.bold),
         actions: [
-  IconButton(
-    icon: const Icon(Icons.logout),
-    tooltip: 'Cerrar sesión',
-    onPressed: () {
-      // Lógica para cerrar sesión (por ejemplo, volver a la pantalla de login)
-      Navigator.pushReplacementNamed(context, '/login');
-    },
-  ),
-],
-
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Cerrar sesión',
+            onPressed: () {
+              Navigator.pushReplacementNamed(context, '/login');
+            },
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: EdgeInsets.all(paddingAll),
@@ -112,6 +261,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   _selectedDay = selectedDay;
                   _focusedDay = focusedDay;
                 });
+                _mostrarDialogoEstadoYSintomas(selectedDay);
               },
               calendarBuilders: CalendarBuilders(
                 defaultBuilder: (context, day, _) {
@@ -140,30 +290,56 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (animo != null)
                         Positioned(
                           bottom: 2,
+                          child: Text(animo, style: TextStyle(fontSize: emojiFontSize)),
+                        ),
+                    ],
+                  );
+                },
+                todayBuilder: (context, day, _) {
+                  final esPeriodo = _esDiaDePeriodo(day);
+                  final animo = _estadoDeAnimoDelDia(day);
+                  return Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Container(
+                        width: rowHeight * 0.8,
+                        height: rowHeight * 0.8,
+                        decoration: BoxDecoration(
+                          color: esPeriodo ? Colors.pink[100] : Colors.pink[200],
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
                           child: Text(
-                            animo,
-                            style: TextStyle(fontSize: emojiFontSize),
+                            '${day.day}',
+                            style: TextStyle(
+                              fontSize: dayFontSize,
+                              color: esPeriodo ? Colors.pink[900] : Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
+                        ),
+                      ),
+                      if (animo != null)
+                        Positioned(
+                          bottom: 2,
+                          child: Text(animo, style: TextStyle(fontSize: emojiFontSize)),
                         ),
                     ],
                   );
                 },
               ),
             ),
-            SizedBox(height: paddingAll / 2),
-            Text(
-              'Animo del dia',
-              style: TextStyle(fontSize: headerFontSize, fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: paddingAll / 4),
+            SizedBox(height: paddingAll),
             Wrap(
               alignment: WrapAlignment.center,
               spacing: paddingAll,
               children: [
                 _leyenda('Periodo', Colors.pink[100]!, leyendaBox, leyendaFont),
-                _leyenda('Hoy', Colors.pinkAccent, leyendaBox, leyendaFont),
+                _leyenda('Hoy', Colors.pink[200]!, leyendaBox, leyendaFont),
               ],
             ),
+            SizedBox(height: paddingAll),
+            _mostrarInformacionGuardada(headerFontSize, paddingAll),
           ],
         ),
       ),
@@ -182,6 +358,124 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         Text(texto, style: TextStyle(fontSize: fontSize)),
       ],
+    );
+  }
+
+  Widget _mostrarInformacionGuardada(double headerFontSize, double paddingAll) {
+    final diasConInfo = <DateTime>[];
+    
+    diasConInfo.addAll(estadosDeAnimo.keys);
+    diasConInfo.addAll(sintomasPorDia.keys);
+    diasConInfo.addAll(periodoDias);
+    
+    final diasUnicos = diasConInfo.toSet().toList();
+    diasUnicos.sort();
+    
+    if (diasUnicos.isEmpty) {
+      return Column(
+        children: [
+          Text(
+            'Información guardada',
+            style: TextStyle(
+                fontSize: headerFontSize, fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: paddingAll / 2),
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16.0),
+              child: Text('No hay información guardada aún. Selecciona un día en el calendario para agregar información.'),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Información guardada',
+          style: TextStyle(
+              fontSize: headerFontSize, fontWeight: FontWeight.bold),
+        ),
+        SizedBox(height: paddingAll / 2),
+        ...diasUnicos.map((dia) => _mostrarInfoDelDia(dia)),
+      ],
+    );
+  }
+
+  Widget _mostrarInfoDelDia(DateTime dia) {
+    final animo = _estadoDeAnimoDelDia(dia);
+    final sintomas = sintomasPorDia[dia] ?? [];
+    final esPeriodo = _esDiaDePeriodo(dia);
+
+    if (animo == null && sintomas.isEmpty && !esPeriodo) {
+      return const SizedBox.shrink();
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8.0),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${dia.day}/${dia.month}/${dia.year}',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                if (esPeriodo)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.pink[100],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '🩸 Período',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.pink[800],
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            if (animo != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Text('Estado de ánimo: ', 
+                      style: TextStyle(fontWeight: FontWeight.w500)),
+                  Text(animo, style: const TextStyle(fontSize: 20)),
+                ],
+              ),
+            ],
+            if (sintomas.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              const Text('Síntomas:', 
+                  style: TextStyle(fontWeight: FontWeight.w500)),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                children: sintomas.map((sintoma) => Chip(
+                  label: Text(sintoma, style: const TextStyle(fontSize: 12)),
+                  backgroundColor: Colors.pink[50],
+                  labelStyle: TextStyle(color: Colors.pink[800]),
+                )).toList(),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

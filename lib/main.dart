@@ -1,12 +1,21 @@
-//import 'package:calma360/screen/mood.dart';
-
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:calma360/screen/home.dart';
 import 'package:calma360/screen/login.dart';
 import 'package:calma360/screen/signup.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
+import 'firebase_options.dart';
+import 'package:timezone/data/latest.dart' as tz; // 🕐 Import necesario
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Inicializa Firebase
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  // Inicializa zonas horarias para notificaciones programadas
+  tz.initializeTimeZones();
+
   runApp(const Calma360App());
 }
 
@@ -33,8 +42,10 @@ class Calma360App extends StatelessWidget {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      supportedLocales: const [Locale('es', 'ES'), Locale('en', 'US')],
+      supportedLocales: const [
+        Locale('es', 'ES'),
+        Locale('en', 'US'),
+      ],
     );
   }
 }
-//
