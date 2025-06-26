@@ -1,3 +1,4 @@
+import 'package:calma360/screen/historialScreen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -5,17 +6,12 @@ import 'package:calma360/screen/home.dart';
 import 'package:calma360/screen/login.dart';
 import 'package:calma360/screen/signup.dart';
 import 'firebase_options.dart';
-import 'package:timezone/data/latest.dart' as tz; // 🕐 Import necesario
+import 'package:timezone/data/latest.dart' as tz;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Inicializa Firebase
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
-  // Inicializa zonas horarias para notificaciones programadas
   tz.initializeTimeZones();
-
   runApp(const Calma360App());
 }
 
@@ -27,15 +23,13 @@ class Calma360App extends StatelessWidget {
     return MaterialApp(
       title: 'Calma360',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.pinkAccent),
-      ),
+      themeMode: ThemeMode.system, // Seguir preferencia del sistema
       initialRoute: '/login',
       routes: {
-        '/login': (context) => LoginScreen(),
-        '/home': (context) => HomeScreen(),
-        '/register': (context) => SignupScreen(),
+        '/login': (context) => const LoginScreen(),
+        '/home': (context) => const HomeScreen(),
+        '/historialScreen': (context) => const HistoryScreen(),
+        '/register': (context) => const SignupScreen(),
       },
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -46,6 +40,7 @@ class Calma360App extends StatelessWidget {
         Locale('es', 'ES'),
         Locale('en', 'US'),
       ],
+      locale: const Locale('es', 'ES'),
     );
   }
 }

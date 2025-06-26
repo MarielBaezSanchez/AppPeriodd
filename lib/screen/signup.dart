@@ -11,7 +11,6 @@ class SignupScreen extends StatefulWidget {
 
 class _SignupScreenState extends State<SignupScreen> {
   final _formKey = GlobalKey<FormState>();
-
   final _emailController = TextEditingController();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -20,6 +19,7 @@ class _SignupScreenState extends State<SignupScreen> {
   bool _obscurePassword = true;
   DateTime? _fechaUltimoPeriodo;
   bool _isLoading = false;
+  final int _selectedDuration = 5; // Default cycle duration
 
   @override
   void dispose() {
@@ -38,6 +38,7 @@ class _SignupScreenState extends State<SignupScreen> {
       lastDate: DateTime.now(),
       locale: const Locale('es', 'ES'),
     );
+
     if (picked != null && picked != _fechaUltimoPeriodo) {
       setState(() {
         _fechaUltimoPeriodo = picked;
@@ -65,14 +66,14 @@ class _SignupScreenState extends State<SignupScreen> {
     });
 
     try {
-      // Registrar usuario con email y password en Firebase Auth
+      // Register user with email and password
       UserCredential userCredential =
           await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
 
-      // Guardar datos adicionales en Firestore (por ejemplo en colección 'users')
+      // Save additional user data in Firestore
       await FirebaseFirestore.instance
           .collection('users')
           .doc(userCredential.user!.uid)
@@ -80,6 +81,7 @@ class _SignupScreenState extends State<SignupScreen> {
         'username': _usernameController.text.trim(),
         'email': _emailController.text.trim(),
         'fechaUltimoPeriodo': _fechaUltimoPeriodo,
+        'periodDuration': _selectedDuration,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
@@ -90,8 +92,8 @@ class _SignupScreenState extends State<SignupScreen> {
         ),
       );
 
-      // Navegar a login o home
       Navigator.pushReplacementNamed(context, '/login');
+
     } on FirebaseAuthException catch (e) {
       String message = 'Error en el registro';
       if (e.code == 'email-already-in-use') {
@@ -101,19 +103,23 @@ class _SignupScreenState extends State<SignupScreen> {
       } else if (e.code == 'invalid-email') {
         message = 'Correo inválido.';
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error inesperado: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error inesperado: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -165,7 +171,7 @@ class _SignupScreenState extends State<SignupScreen> {
                     ),
                     const SizedBox(height: 40),
 
-                    // Correo
+                    // Email field
                     const Text(
                       'Correo electrónico',
                       style: TextStyle(
@@ -222,7 +228,7 @@ class _SignupScreenState extends State<SignupScreen> {
                     ),
                     const SizedBox(height: 24),
 
-                    // Nombre de usuario
+                    // Username field
                     const Text(
                       'Nombre de usuario',
                       style: TextStyle(
@@ -274,7 +280,7 @@ class _SignupScreenState extends State<SignupScreen> {
                     ),
                     const SizedBox(height: 24),
 
-                    // Contraseña
+                    // Password field
                     const Text(
                       'Contraseña',
                       style: TextStyle(
@@ -322,10 +328,6 @@ class _SignupScreenState extends State<SignupScreen> {
                             width: 2,
                           ),
                         ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 16,
-                        ),
                         suffixIcon: IconButton(
                           icon: Icon(
                             _obscurePassword
@@ -339,11 +341,15 @@ class _SignupScreenState extends State<SignupScreen> {
                             });
                           },
                         ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 16,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 24),
 
-                    // Último periodo/menstruación
+                    // Last period date field
                     const Text(
                       'Último periodo/menstruación',
                       style: TextStyle(

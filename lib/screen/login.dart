@@ -13,6 +13,8 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
+  bool _obscurePassword = true;
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -129,13 +131,25 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             SizedBox(height: 8),
                             TextFormField(
-                              controller: _passwordController,
-                              obscureText: true,
-                              decoration: _inputDecoration(
-                                'Escribe tu contraseña',
-                                inputPadding,
-                              ),
-                            ),
+  controller: _passwordController,
+  obscureText: _obscurePassword,
+  decoration: _inputDecoration(
+    'Escribe tu contraseña',
+    inputPadding,
+  ).copyWith(
+    suffixIcon: IconButton(
+      icon: Icon(
+        _obscurePassword ? Icons.visibility_off : Icons.visibility,
+        color: Color(0xFF8B4A6B),
+      ),
+      onPressed: () {
+        setState(() {
+          _obscurePassword = !_obscurePassword;
+        });
+      },
+    ),
+  ),
+),
                             SizedBox(height: inputPadding * 2),
 
                             ElevatedButton(

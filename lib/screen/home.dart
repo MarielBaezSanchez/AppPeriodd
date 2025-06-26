@@ -1,7 +1,10 @@
+// ignore_for_file: use_build_context_synchronously
+
 import 'package:calma360/period_service.dart';
+import 'package:calma360/registro_diario_service.dart';
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
-
+import 'package:intl/intl.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -38,6 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
   ];
 
   final PeriodService _periodService = PeriodService();
+  final RegistroDiarioService _registroDiarioService = RegistroDiarioService();
 
   @override
   void initState() {
@@ -54,16 +58,33 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _cargarDatosPrevios() async {
     DateTime? lastPeriodDate = await _periodService.getLastPeriodDate();
+    List<int> cycleLengths = await _periodService.getCycleLengths();
+    double averageCycleLength = _periodService.getAverageCycleLength(cycleLengths);
+
     if (lastPeriodDate != null) {
-      // Genera periodoDias para mostrar en calendario: 7 días desde lastPeriodDate
       periodoDias = List.generate(7, (index) => lastPeriodDate.add(Duration(days: index)));
-      List<int> cycleLengths = await _periodService.getCycleLengths();
-      double averageCycleLength = _periodService.getAverageCycleLength(cycleLengths);
+
       DateTime? nextPeriodDate = _periodService.predictNextPeriodDate(lastPeriodDate, averageCycleLength);
+
       if (nextPeriodDate != null) {
-        await _periodService.schedulePeriodNotifications(nextPeriodDate);
+        await _periodService.schedulePeriodNotifications(nextPeriodDate.toIso8601String());
       }
+    } else {
+      periodoDias.clear();
     }
+
+    // Escuchar los registros diarios y actualizar mapas de ánimo y síntomas
+    _registroDiarioService.obtenerRegistrosDiarios().listen((registros) {
+      setState(() {
+        estadosDeAnimo.clear();
+        sintomasPorDia.clear();
+        for (var registro in registros) {
+          estadosDeAnimo[registro.fecha] = registro.estadoAnimo;
+          sintomasPorDia[registro.fecha] = registro.sintomas;
+        }
+      });
+    });
+
     setState(() {});
   }
 
@@ -95,7 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (context, setDialogState) {
             return AlertDialog(
               scrollable: true,
-              title: Text('¿Cómo te sientes hoy? (${dia.day}/${dia.month})'),
+              title: Text('¿Cómo te sientes hoy? (${DateFormat('dd/MM/yyyy').format(dia)})'),
               content: SizedBox(
                 width: double.maxFinite,
                 child: Column(
@@ -177,12 +198,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       sintomasPorDia[dia] = sintomasSeleccionados;
                     });
 
+                    // Guardar el registro diario en Firestore
+                    await _registroDiarioService.guardarRegistroDiario(dia, estadoSeleccionado ?? '', sintomasSeleccionados);
+
                     // Guardar último periodo y duración promedio del ciclo localmente
                     await _periodService.saveLastPeriodDate(dia);
-                    // Actualiza la lista de duración del ciclo con ejemplo fijo, ajusta a lógica real cuando tengas múltiple historial
-                    await _periodService.saveCycleLengths([28]); 
+                    await _periodService.saveCycleLengths([28]); // Aquí ajusta la lógica real si tienes múltiples duraciones
 
-                    await _cargarDatosPrevios(); // Refresca notificaciones
+                    await _cargarDatosPrevios(); // Refresca datos y notificaciones
 
                     Navigator.of(context).pop();
                   },
@@ -218,9 +241,15 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('Calendario Menstrual'),
         backgroundColor: Colors.pinkAccent,
         toolbarHeight: toolbarH,
-        titleTextStyle:
-            TextStyle(fontSize: headerFontSize, fontWeight: FontWeight.bold),
+        titleTextStyle: TextStyle(fontSize: headerFontSize, fontWeight: FontWeight.bold),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'Ver historial',
+            onPressed: () {
+              Navigator.pushNamed(context, '/historialScreen');
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Cerrar sesión',
@@ -424,7 +453,7 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  '${dia.day}/${dia.month}/${dia.year}',
+                  DateFormat('dd/MM/yyyy').format(dia),
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -452,16 +481,14 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  const Text('Estado de ánimo: ', 
-                      style: TextStyle(fontWeight: FontWeight.w500)),
+                  const Text('Estado de ánimo: ', style: TextStyle(fontWeight: FontWeight.w500)),
                   Text(animo, style: const TextStyle(fontSize: 20)),
                 ],
               ),
             ],
             if (sintomas.isNotEmpty) ...[
               const SizedBox(height: 8),
-              const Text('Síntomas:', 
-                  style: TextStyle(fontWeight: FontWeight.w500)),
+              const Text('Síntomas:', style: TextStyle(fontWeight: FontWeight.w500)),
               const SizedBox(height: 4),
               Wrap(
                 spacing: 4,

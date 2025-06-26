@@ -5,22 +5,24 @@ class RegistroDiarioService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  /// Guarda el estado de ánimo y síntomas del día actual en Firestore
+  /// Guarda el estado de ánimo y síntomas del día actual en la colección periodHistory
   Future<void> guardarRegistroDiario(DateTime fecha, String estadoAnimo, List<String> sintomas) async {
-    final uid = _auth.currentUser ?.uid;
+    final uid = _auth.currentUser?.uid;
     if (uid == null) throw Exception('Usuario no autenticado');
 
-    await _firestore.collection('usuarios').doc(uid).collection('registros').doc(fecha.toIso8601String()).set({
-      'estadoAnimo': estadoAnimo,
-      'sintomas': sintomas,
-      'fecha': fecha,
-      'creadoEn': FieldValue.serverTimestamp(),
+    await _firestore.collection('periodHistory').add({
+      'userId': uid,
+      'startDate': fecha,
+      'endDate': fecha, // Puedes ajustar si hay más de un día
+      'mood': estadoAnimo,
+      'symptoms': sintomas,
+      'createdAt': FieldValue.serverTimestamp(),
     });
   }
 
-  /// Recupera los registros diarios del usuario desde Firestore
+  /// Este método queda opcional: puedes usarlo si decides mostrar los registros antiguos
   Stream<List<RegistroDiario>> obtenerRegistrosDiarios() {
-    final uid = _auth.currentUser ?.uid;
+    final uid = _auth.currentUser?.uid;
     if (uid == null) throw Exception('Usuario no autenticado');
 
     return _firestore.collection('usuarios').doc(uid).collection('registros')

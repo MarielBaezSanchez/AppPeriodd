@@ -3,6 +3,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class PeriodService {
   static final PeriodService _instance = PeriodService._internal();
@@ -10,6 +11,7 @@ class PeriodService {
   PeriodService._internal();
 
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   static const String _prefsCycleLengthsKey = 'cycleLengths';
   static const String _prefsLastPeriodDateKey = 'lastPeriodDate';
@@ -68,29 +70,42 @@ class PeriodService {
   }
 
   /// Programa notificaciones locales para días previos y día estimado del próximo periodo
-  Future<void> schedulePeriodNotifications(DateTime predictedPeriodDate) async {
-    // Cancelar notificaciones previas para evitar duplicados
-    await _notificationsPlugin.cancelAll();
+  Future<void> schedulePeriodNotifications(String userId) async {
+    final lastPeriodDate = await getLastPeriodDate();
+    final cycleLengths = await getCycleLengths();
+    final averageCycleLength = getAverageCycleLength(cycleLengths);
+    final predictedPeriodDate = predictNextPeriodDate(lastPeriodDate, averageCycleLength);
 
-    // Notificación 3 días antes
-    DateTime notifyDay3 = predictedPeriodDate.subtract(Duration(days: 3));
-    if (notifyDay3.isAfter(DateTime.now())) {
-      await _scheduleNotification(
-        id: 1,
-        scheduledDate: notifyDay3,
-        title: 'Tu periodo se acerca',
-        body: 'Tu periodo estimado comienza en 3 días. Prepárate.',
-      );
-    }
+    if (predictedPeriodDate != null) {
+      // Cancelar notificaciones previas para evitar duplicados
+      await _notificationsPlugin.cancelAll();
 
-    // Notificación el día estimado del periodo
-    if (predictedPeriodDate.isAfter(DateTime.now())) {
-      await _scheduleNotification(
-        id: 2,
-        scheduledDate: predictedPeriodDate,
-        title: 'Tu periodo ha comenzado',
-        body: 'Es posible que tu periodo comience hoy.',
-      );
+      // Notificación 3 días antes
+      DateTime notifyDay3 = predictedPeriodDate.subtract(Duration(days: 3));
+      if (notifyDay3.isAfter(DateTime.now())) {
+        await _scheduleNotification(
+          id: 1,
+          scheduledDate: notifyDay3,
+          title: 'Tu periodo se acerca',
+          body: 'Tu periodo estimado comienza en 3 días. Prepárate.',
+        );
+      }
+
+      // Notificación el día estimado del periodo
+      if (predictedPeriodDate.isAfter(DateTime.now())) {
+        await _scheduleNotification(
+          id: 2,
+          scheduledDate: predictedPeriodDate,
+          title: 'Tu periodo ha comenzado',
+          body: 'Es posible que tu periodo comience hoy.',
+        );
+      }
+
+      // Guardar la fecha del próximo periodo en Firestore
+      await _firestore.collection('users').doc(userId).update({
+        'nextPeriodDate': predictedPeriodDate,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     }
   }
 
@@ -123,5 +138,26 @@ class PeriodService {
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       matchDateTimeComponents: DateTimeComponents.dateAndTime,
     );
+  }
+
+  /// Obtiene la predicción actual del próximo periodo
+  Future<Map<String, dynamic>?> getCurrentPrediction(String userId) async {
+    final doc = await _firestore.collection('users').doc(userId).get();
+
+    if (!doc.exists || !doc.data()!.containsKey('fechaUltimoPeriodo')) return null;
+
+    final data = doc.data()!;
+    final lastPeriod = (data['fechaUltimoPeriodo'] as Timestamp).toDate();
+    final cycleDuration = data['periodDuration'] ?? 28;
+    final durationDays = 5;
+
+    final nextPeriodStart = lastPeriod.add(Duration(days: cycleDuration));
+    final daysRemaining = nextPeriodStart.difference(DateTime.now()).inDays;
+
+    return {
+      'nextPeriodStart': nextPeriodStart,
+      'daysRemaining': daysRemaining,
+      'durationDays': durationDays,
+    };
   }
 }
