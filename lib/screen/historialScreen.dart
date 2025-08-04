@@ -9,23 +9,42 @@ class HistoryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final userId = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+
+    if (userId == null) {
+      debugPrint('❌ Usuario no autenticado');
+      return const Scaffold(
+        body: Center(
+          child: Text('Debes iniciar sesión para ver el historial.'),
+        ),
+      );
+    }
+
+    debugPrint('✅ Usuario autenticado con UID: $userId');
 
     return Scaffold(
       appBar: AppBar(title: const Text('Historial')),
       body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('usuarios')
-            .doc(userId)
-            .collection('registros')
-            .orderBy('fecha', descending: true)
-            .snapshots(),
+        stream:
+            FirebaseFirestore.instance
+                .collection('periodHistory')
+                .where('userId', isEqualTo: userId)
+                .orderBy('createdAt', descending: true)
+                .snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return const Center(child: Text('Error al cargar historial.'));
+          }
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return const Center(child: Text('No hay registros disponibles.'));
+          }
 
           final groupedEntries = groupBy(snapshot.data!.docs, (doc) {
-            final date = (doc['fecha'] as Timestamp).toDate();
-            return DateFormat('MMMM yyyy', 'es').format(date);
+            final createdAt = (doc['createdAt'] as Timestamp).toDate();
+            return DateFormat('MMMM yyyy', 'es').format(createdAt);
           });
 
           return ListView.builder(
@@ -41,26 +60,33 @@ class HistoryScreen extends StatelessWidget {
                     padding: const EdgeInsets.all(16),
                     child: Text(
                       month.toUpperCase(),
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
                     ),
                   ),
                   ...entries.map((doc) {
                     final data = doc.data()! as Map<String, dynamic>;
-                    final fecha = (data['fecha'] as Timestamp).toDate();
-                    final estadoAnimo = data['estadoAnimo'] ?? '';
-                    final sintomas = List<String>.from(data['sintomas'] ?? []);
+                    final createdAt =
+                        (data['createdAt'] as Timestamp?)?.toDate() ??
+                        DateTime.now();
+                    final mood = data['mood'] ?? '';
+                    final symptoms = List<String>.from(data['symptoms'] ?? []);
 
                     return ListTile(
-                      title: Text(DateFormat('dd/MM/yyyy').format(fecha)),
+                      leading: const Icon(Icons.favorite, color: Colors.pink),
+                      title: Text(DateFormat('dd/MM/yyyy').format(createdAt)),
                       subtitle: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Estado de ánimo: $estadoAnimo'),
-                          if (sintomas.isNotEmpty) Text('Síntomas: ${sintomas.join(', ')}'),
+                          Text('Estado de ánimo: $mood'),
+                          if (symptoms.isNotEmpty)
+                            Text('Síntomas: ${symptoms.join(', ')}'),
                         ],
                       ),
                     );
-                  }),
+                  }).toList(),
                 ],
               );
             },
