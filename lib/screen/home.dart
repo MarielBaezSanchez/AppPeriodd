@@ -1,10 +1,10 @@
-// ignore_for_file: use_build_context_synchronously
-
 import 'package:calma360/period_service.dart';
 import 'package:calma360/registro_diario_service.dart';
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -14,13 +14,15 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  DateTime? _ultimoPeriodo; // Fecha del último periodo guardada
+  DateTime? _proximoPeriodo;
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
 
   List<DateTime> periodoDias = [];
 
-  final Map<DateTime, String> estadosDeAnimo = {};
-  final Map<DateTime, List<String>> sintomasPorDia = {};
+  // Mapa donde clave = fecha sin hora, valor = Map con keys 'mood' y 'symptoms'
+  final Map<DateTime, Map<String, dynamic>> registrosPorDia = {};
 
   final List<String> sintomasDisponibles = [
     'Alteración del sueño',
@@ -48,56 +50,143 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _periodService.initNotifications();
     _cargarDatosPrevios();
-    final hoy = DateTime.now();
-    if (_esDiaDePeriodo(hoy)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _mostrarDialogoEstadoYSintomas(hoy);
-      });
-    }
+    _cargarRegistrosFirestore();
   }
 
   Future<void> _cargarDatosPrevios() async {
-    DateTime? lastPeriodDate = await _periodService.getLastPeriodDate();
-    List<int> cycleLengths = await _periodService.getCycleLengths();
-    double averageCycleLength = _periodService.getAverageCycleLength(cycleLengths);
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null) return;
 
-    if (lastPeriodDate != null) {
-      periodoDias = List.generate(7, (index) => lastPeriodDate.add(Duration(days: index)));
+    // Cargar fechaUltimoPeriodo guardada en Firestore en colección 'users', en caso de no existir, muestra un calendario para que el usuario ingrese la fecha
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(userId)
+        .get();
 
-      DateTime? nextPeriodDate = _periodService.predictNextPeriodDate(lastPeriodDate, averageCycleLength);
+    if (doc.exists && doc.data()?['fechaUltimoPeriodo'] != null) {
+      Timestamp ts = doc.data()!['fechaUltimoPeriodo'];
+      setState(() {
+        _ultimoPeriodo = ts.toDate();
+      });
 
-      if (nextPeriodDate != null) {
-        await _periodService.schedulePeriodNotifications(nextPeriodDate.toIso8601String());
-      }
+      // Después de cargar último periodo, calcular próximo periodo
+      _calcularProximoPeriodo();
     } else {
-      periodoDias.clear();
+      // Si no hay fecha último periodo guardada, pedir al usuario que la ingrese
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _pedirFechaUltimoPeriodo();
+      });
+    }
+  }
+
+  Future<void> _pedirFechaUltimoPeriodo() async {
+    DateTime ahora = DateTime.now();
+    DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: ahora,
+      firstDate: DateTime(2020),
+      lastDate: ahora,
+    );
+
+    if (picked != null) {
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      if (userId == null) return;
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .set({'fechaUltimoPeriodo': Timestamp.fromDate(picked)}, SetOptions(merge: true));
+
+      setState(() {
+        _ultimoPeriodo = picked;
+      });
+
+      // Luego recalculamos próximo periodo basándonos en este dato
+      _calcularProximoPeriodo();
+    }
+  }
+
+  void _calcularProximoPeriodo() {
+    if (_ultimoPeriodo == null) return;
+
+    // Tomamos el promedio de duración de ciclo si hay datos suficientes
+    int promedioDiasCiclo = 28; // Valor por defecto
+
+    if (periodoDias.length >= 2) {
+      periodoDias.sort();
+      List<int> diferencias = [];
+      for (int i = 1; i < periodoDias.length; i++) {
+        diferencias.add(periodoDias[i].difference(periodoDias[i - 1]).inDays);
+      }
+      promedioDiasCiclo = diferencias.reduce((a, b) => a + b) ~/ diferencias.length;
     }
 
-    // Escuchar los registros diarios y actualizar mapas de ánimo y síntomas
-    _registroDiarioService.obtenerRegistrosDiarios().listen((registros) {
-      setState(() {
-        estadosDeAnimo.clear();
-        sintomasPorDia.clear();
-        for (var registro in registros) {
-          estadosDeAnimo[registro.fecha] = registro.estadoAnimo;
-          sintomasPorDia[registro.fecha] = registro.sintomas;
-        }
-      });
+    final calculo = _ultimoPeriodo!.add(Duration(days: promedioDiasCiclo));
+    setState(() {
+      _proximoPeriodo = calculo;
+    });
+  }
+
+  // Carga registros de periodos y estados desde Firestore
+  Future<void> _cargarRegistrosFirestore() async {
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null) return;
+
+    final snapshot = await FirebaseFirestore.instance
+        .collection('periodHistory')
+        .where('userId', isEqualTo: userId)
+        .get();
+
+    final Map<DateTime, Map<String, dynamic>> registros = {};
+    final List<DateTime> fechasPeriodo = [];
+
+    for (var doc in snapshot.docs) {
+      final data = doc.data();
+      final createdAtTimestamp = data['createdAt'] as Timestamp?;
+      if (createdAtTimestamp == null) continue;
+
+      final fechaDia = DateUtils.dateOnly(createdAtTimestamp.toDate().toLocal());
+      final mood = data['mood'] ?? '';
+      final symptoms = List<String>.from(data['symptoms'] ?? []);
+
+      registros[fechaDia] = {
+        'mood': mood,
+        'symptoms': symptoms,
+      };
+
+      if (mood == '🩸' || data['isPeriod'] == true) {
+        fechasPeriodo.add(fechaDia);
+      }
+    }
+
+    setState(() {
+      registrosPorDia.clear();
+      registrosPorDia.addAll(registros);
+      periodoDias = fechasPeriodo;
     });
 
-    setState(() {});
+    // Recalcular próximo periodo basándonos en último periodo y datos actuales
+    _calcularProximoPeriodo();
   }
 
   bool _esDiaDePeriodo(DateTime day) {
-    return periodoDias.any((d) =>
-        d.year == day.year && d.month == day.month && d.day == day.day);
+    return periodoDias.any(
+      (d) => _esMismoDia(d, day),
+    );
   }
 
   String? _estadoDeAnimoDelDia(DateTime day) {
-    for (var entry in estadosDeAnimo.entries) {
-      if (_esMismoDia(entry.key, day)) return entry.value;
-    }
-    return null;
+    final registro = registrosPorDia[DateUtils.dateOnly(day)];
+    if (registro == null) return null;
+    final mood = registro['mood'] as String?;
+    return mood?.isNotEmpty == true ? mood : null;
+  }
+
+  List<String> _sintomasDelDia(DateTime day) {
+    final registro = registrosPorDia[DateUtils.dateOnly(day)];
+    if (registro == null) return [];
+    final symptoms = registro['symptoms'] as List<String>?;
+    return symptoms ?? [];
   }
 
   bool _esMismoDia(DateTime a, DateTime b) {
@@ -106,7 +195,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _mostrarDialogoEstadoYSintomas(DateTime dia) {
     String? estadoSeleccionado = _estadoDeAnimoDelDia(dia);
-    List<String> sintomasSeleccionados = sintomasPorDia[dia]?.toList() ?? [];
+    List<String> sintomasSeleccionados = List<String>.from(_sintomasDelDia(dia));
 
     showDialog(
       context: context,
@@ -116,7 +205,9 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (context, setDialogState) {
             return AlertDialog(
               scrollable: true,
-              title: Text('¿Cómo te sientes hoy? (${DateFormat('dd/MM/yyyy').format(dia)})'),
+              title: Text(
+                '¿Cómo te sientes hoy? (${DateFormat('dd/MM/yyyy').format(dia)})',
+              ),
               content: SizedBox(
                 width: double.maxFinite,
                 child: Column(
@@ -127,7 +218,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 10,
-                      children: ['😢', '😐', '🙂', '😄'].map((emoji) {
+                      children: ['🩸', '😊', '😐', '😞'].map((emoji) {
                         return GestureDetector(
                           onTap: () {
                             setDialogState(() {
@@ -143,12 +234,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                   : Colors.grey[100],
                               border: Border.all(
                                 color: estadoSeleccionado == emoji
-                                    ? Colors.pink
+                                    ? Colors.pink!
                                     : Colors.grey,
                                 width: 2,
                               ),
                             ),
-                            child: Text(emoji, style: const TextStyle(fontSize: 32)),
+                            child: Text(
+                              emoji,
+                              style: const TextStyle(fontSize: 32),
+                            ),
                           ),
                         );
                       }).toList(),
@@ -191,21 +285,48 @@ class _HomeScreenState extends State<HomeScreen> {
                 TextButton(
                   child: const Text('Guardar'),
                   onPressed: () async {
+                    final userId = FirebaseAuth.instance.currentUser?.uid;
+                    if (userId == null) return;
+
+                    // Actualizar el mapa local
                     setState(() {
-                      if (estadoSeleccionado != null) {
-                        estadosDeAnimo[dia] = estadoSeleccionado!;
+                      registrosPorDia[DateUtils.dateOnly(dia)] = {
+                        'mood': estadoSeleccionado ?? '',
+                        'symptoms': sintomasSeleccionados,
+                      };
+
+                      if (estadoSeleccionado == '🩸') {
+                        if (!periodoDias.any((d) => _esMismoDia(d, dia))) {
+                          periodoDias.add(DateUtils.dateOnly(dia));
+                        }
+                      } else {
+                        periodoDias.removeWhere((d) => _esMismoDia(d, dia));
                       }
-                      sintomasPorDia[dia] = sintomasSeleccionados;
                     });
 
-                    // Guardar el registro diario en Firestore
-                    await _registroDiarioService.guardarRegistroDiario(dia, estadoSeleccionado ?? '', sintomasSeleccionados);
+                    // Guardar en Firestore (añadir nuevo documento)
+                    await FirebaseFirestore.instance.collection('periodHistory').add({
+                      'userId': userId,
+                      'createdAt': Timestamp.fromDate(dia),
+                      'mood': estadoSeleccionado ?? '',
+                      'symptoms': sintomasSeleccionados,
+                      'isPeriod': estadoSeleccionado == '🩸',
+                    });
 
-                    // Guardar último periodo y duración promedio del ciclo localmente
-                    await _periodService.saveLastPeriodDate(dia);
-                    await _periodService.saveCycleLengths([28]); // Aquí ajusta la lógica real si tienes múltiples duraciones
+                    // Opcional: si guardas un nuevo día de periodo, actualizar también fecha último periodo
+                    if (estadoSeleccionado == '🩸') {
+                      await FirebaseFirestore.instance
+                          .collection('users')
+                          .doc(userId)
+                          .set({'fechaUltimoPeriodo': Timestamp.fromDate(dia)}, SetOptions(merge: true));
 
-                    await _cargarDatosPrevios(); // Refresca datos y notificaciones
+                      setState(() {
+                        _ultimoPeriodo = dia;
+                      });
+                    }
+
+                    // Actualizar próximos periodos
+                    await _cargarRegistrosFirestore();
 
                     Navigator.of(context).pop();
                   },
@@ -241,7 +362,10 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('Calendario Menstrual'),
         backgroundColor: Colors.pinkAccent,
         toolbarHeight: toolbarH,
-        titleTextStyle: TextStyle(fontSize: headerFontSize, fontWeight: FontWeight.bold),
+        titleTextStyle: TextStyle(
+          fontSize: headerFontSize,
+          fontWeight: FontWeight.bold,
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.history),
@@ -284,18 +408,37 @@ class _HomeScreenState extends State<HomeScreen> {
                   shape: BoxShape.circle,
                 ),
               ),
-              selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+              selectedDayPredicate: (day) => _selectedDay != null && _esMismoDia(day, _selectedDay!),
               onDaySelected: (selectedDay, focusedDay) {
                 setState(() {
                   _selectedDay = selectedDay;
                   _focusedDay = focusedDay;
                 });
+
                 _mostrarDialogoEstadoYSintomas(selectedDay);
               },
               calendarBuilders: CalendarBuilders(
                 defaultBuilder: (context, day, _) {
                   final esPeriodo = _esDiaDePeriodo(day);
+                  final esProximoPeriodo =
+                      _proximoPeriodo != null && _esMismoDia(day, _proximoPeriodo!);
+                  final tieneRegistro = registrosPorDia.containsKey(DateUtils.dateOnly(day));
                   final animo = _estadoDeAnimoDelDia(day);
+
+                  Color? bgColor;
+                  Color textColor = Colors.black87;
+
+                  if (esPeriodo) {
+                    bgColor = Colors.pink[100];
+                    textColor = Colors.pink[900]!;
+                  } else if (esProximoPeriodo) {
+                    bgColor = Colors.lightBlue[100];
+                    textColor = Colors.blue[900]!;
+                  } else if (tieneRegistro) {
+                    bgColor = Colors.deepPurple[100];
+                    textColor = Colors.deepPurple[900]!;
+                  }
+
                   return Stack(
                     alignment: Alignment.center,
                     children: [
@@ -303,7 +446,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         width: rowHeight * 0.8,
                         height: rowHeight * 0.8,
                         decoration: BoxDecoration(
-                          color: esPeriodo ? Colors.pink[100] : null,
+                          color: bgColor,
                           shape: BoxShape.circle,
                         ),
                         child: Center(
@@ -311,7 +454,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             '${day.day}',
                             style: TextStyle(
                               fontSize: dayFontSize,
-                              color: esPeriodo ? Colors.pink[900] : Colors.black87,
+                              color: textColor,
                             ),
                           ),
                         ),
@@ -319,14 +462,35 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (animo != null)
                         Positioned(
                           bottom: 2,
-                          child: Text(animo, style: TextStyle(fontSize: emojiFontSize)),
+                          child: Text(
+                            animo,
+                            style: TextStyle(fontSize: emojiFontSize),
+                          ),
                         ),
                     ],
                   );
                 },
                 todayBuilder: (context, day, _) {
                   final esPeriodo = _esDiaDePeriodo(day);
+                  final esProximoPeriodo =
+                      _proximoPeriodo != null && _esMismoDia(day, _proximoPeriodo!);
+                  final tieneRegistro = registrosPorDia.containsKey(DateUtils.dateOnly(day));
                   final animo = _estadoDeAnimoDelDia(day);
+
+                  Color bgColor = Colors.pink[200]!;
+                  Color textColor = Colors.white;
+
+                  if (esPeriodo) {
+                    bgColor = Colors.pink[100]!;
+                    textColor = Colors.pink[900]!;
+                  } else if (esProximoPeriodo) {
+                    bgColor = Colors.lightBlue[300]!;
+                    textColor = Colors.blue[900]!;
+                  } else if (tieneRegistro) {
+                    bgColor = Colors.deepPurple[300]!;
+                    textColor = Colors.white;
+                  }
+
                   return Stack(
                     alignment: Alignment.center,
                     children: [
@@ -334,7 +498,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         width: rowHeight * 0.8,
                         height: rowHeight * 0.8,
                         decoration: BoxDecoration(
-                          color: esPeriodo ? Colors.pink[100] : Colors.pink[200],
+                          color: bgColor,
                           shape: BoxShape.circle,
                         ),
                         child: Center(
@@ -342,7 +506,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             '${day.day}',
                             style: TextStyle(
                               fontSize: dayFontSize,
-                              color: esPeriodo ? Colors.pink[900] : Colors.white,
+                              color: textColor,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -351,7 +515,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (animo != null)
                         Positioned(
                           bottom: 2,
-                          child: Text(animo, style: TextStyle(fontSize: emojiFontSize)),
+                          child: Text(
+                            animo,
+                            style: TextStyle(fontSize: emojiFontSize),
+                          ),
                         ),
                     ],
                   );
@@ -365,6 +532,8 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 _leyenda('Periodo', Colors.pink[100]!, leyendaBox, leyendaFont),
                 _leyenda('Hoy', Colors.pink[200]!, leyendaBox, leyendaFont),
+                _leyenda('Con registro', Colors.deepPurple[100]!, leyendaBox, leyendaFont),
+                _leyenda('Proximo periodo', Colors.lightBlue[100]!, leyendaBox, leyendaFont),
               ],
             ),
             SizedBox(height: paddingAll),
@@ -391,118 +560,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _mostrarInformacionGuardada(double headerFontSize, double paddingAll) {
-    final diasConInfo = <DateTime>[];
-    
-    diasConInfo.addAll(estadosDeAnimo.keys);
-    diasConInfo.addAll(sintomasPorDia.keys);
+    final diasConInfo = registrosPorDia.keys.toList();
     diasConInfo.addAll(periodoDias);
-    
-    final diasUnicos = diasConInfo.toSet().toList();
-    diasUnicos.sort();
-    
-    if (diasUnicos.isEmpty) {
-      return Column(
-        children: [
-          Text(
-            'Información guardada',
-            style: TextStyle(
-                fontSize: headerFontSize, fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: paddingAll / 2),
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Text('No hay información guardada aún. Selecciona un día en el calendario para agregar información.'),
-            ),
-          ),
-        ],
-      );
-    }
+    final diasUnicos = diasConInfo.toSet().toList()..sort();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Información guardada',
-          style: TextStyle(
-              fontSize: headerFontSize, fontWeight: FontWeight.bold),
-        ),
-        SizedBox(height: paddingAll / 2),
-        ...diasUnicos.map((dia) => _mostrarInfoDelDia(dia)),
-      ],
-    );
-  }
-
-  Widget _mostrarInfoDelDia(DateTime dia) {
-    final animo = _estadoDeAnimoDelDia(dia);
-    final sintomas = sintomasPorDia[dia] ?? [];
-    final esPeriodo = _esDiaDePeriodo(dia);
-
-    if (animo == null && sintomas.isEmpty && !esPeriodo) {
-      return const SizedBox.shrink();
-    }
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8.0),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  DateFormat('dd/MM/yyyy').format(dia),
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                if (esPeriodo)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.pink[100],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '🩸 Período',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.pink[800],
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-              ],
+        Text('Días con registro:', style: TextStyle(fontSize: headerFontSize, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        ...diasUnicos.map((dia) {
+          final mood = _estadoDeAnimoDelDia(dia) ?? '';
+          final symptoms = _sintomasDelDia(dia);
+          return Padding(
+            padding: EdgeInsets.only(bottom: paddingAll / 2),
+            child: Text(
+              '${DateFormat('dd/MM/yyyy').format(dia)} - Estado: $mood - Síntomas: ${symptoms.join(', ')}',
+              style: const TextStyle(fontSize: 14),
             ),
-            if (animo != null) ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Text('Estado de ánimo: ', style: TextStyle(fontWeight: FontWeight.w500)),
-                  Text(animo, style: const TextStyle(fontSize: 20)),
-                ],
-              ),
-            ],
-            if (sintomas.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              const Text('Síntomas:', style: TextStyle(fontWeight: FontWeight.w500)),
-              const SizedBox(height: 4),
-              Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                children: sintomas.map((sintoma) => Chip(
-                  label: Text(sintoma, style: const TextStyle(fontSize: 12)),
-                  backgroundColor: Colors.pink[50],
-                  labelStyle: TextStyle(color: Colors.pink[800]),
-                )).toList(),
-              ),
-            ],
-          ],
-        ),
-      ),
+          );
+        }),
+      ],
     );
   }
 }
