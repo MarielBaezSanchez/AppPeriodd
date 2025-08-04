@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -23,7 +22,7 @@ class _LoginScreenState extends State<LoginScreen> {
         final height = constraints.maxHeight;
         DeviceType deviceType;
 
-        if (width <= 400 && height <= 500) {
+        if (width <= 100 && height <= 500) {
           deviceType = DeviceType.smartwatch;
         } else if (width < 600) {
           deviceType = DeviceType.phone;
@@ -131,25 +130,27 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             SizedBox(height: 8),
                             TextFormField(
-  controller: _passwordController,
-  obscureText: _obscurePassword,
-  decoration: _inputDecoration(
-    'Escribe tu contraseña',
-    inputPadding,
-  ).copyWith(
-    suffixIcon: IconButton(
-      icon: Icon(
-        _obscurePassword ? Icons.visibility_off : Icons.visibility,
-        color: Color(0xFF8B4A6B),
-      ),
-      onPressed: () {
-        setState(() {
-          _obscurePassword = !_obscurePassword;
-        });
-      },
-    ),
-  ),
-),
+                              controller: _passwordController,
+                              obscureText: _obscurePassword,
+                              decoration: _inputDecoration(
+                                'Escribe tu contraseña',
+                                inputPadding,
+                              ).copyWith(
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscurePassword
+                                        ? Icons.visibility_off
+                                        : Icons.visibility,
+                                    color: Color(0xFF8B4A6B),
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _obscurePassword = !_obscurePassword;
+                                    });
+                                  },
+                                ),
+                              ),
+                            ),
                             SizedBox(height: inputPadding * 2),
 
                             ElevatedButton(
@@ -229,56 +230,52 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _handleLogin() async {
-  final email = _emailController.text.trim();
-  final password = _passwordController.text;
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
 
-  if (email.isEmpty || password.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Por favor, ingresa correo y contraseña.'),
-        backgroundColor: Colors.redAccent,
-      ),
-    );
-    return;
-  }
-
-  try {
-    // Intentar inicio de sesión con Firebase
-    await FirebaseAuth.instance.signInWithEmailAndPassword(
-      email: email,
-      password: password,
-    );
-    // Si tiene éxito, navegar a home
-    Navigator.pushReplacementNamed(context, '/home');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('¡Bienvenida a Calma360!'),
-        backgroundColor: Color(0xFF8B4A6B),
-      ),
-    );
-  } on FirebaseAuthException catch (e) {
-    String message = 'Error al iniciar sesión';
-    if (e.code == 'user-not-found') {
-      message = 'Usuario no encontrado.';
-    } else if (e.code == 'wrong-password') {
-      message = 'Contraseña incorrecta.';
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Por favor, ingresa correo y contraseña.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.redAccent,
-      ),
-    );
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Ocurrió un error inesperado.'),
-        backgroundColor: Colors.redAccent,
-      ),
-    );
-  }
-}
 
+    try {
+      // Intentar inicio de sesión con Firebase
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      // Si tiene éxito, navegar a home
+      Navigator.pushReplacementNamed(context, '/home');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('¡Bienvenida a Calma360!'),
+          backgroundColor: Color(0xFF8B4A6B),
+        ),
+      );
+    } on FirebaseAuthException catch (e) {
+      String message = 'Error al iniciar sesión';
+      if (e.code == 'user-not-found') {
+        message = 'Usuario no encontrado.';
+      } else if (e.code == 'wrong-password') {
+        message = 'Contraseña incorrecta.';
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: Colors.redAccent),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Ocurrió un error inesperado.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
 
   void _navigateToRegister() {
     Navigator.pushNamed(context, '/register');
