@@ -80,7 +80,7 @@ class _SignupScreenState extends State<SignupScreen> {
           .set({
         'username': _usernameController.text.trim(),
         'email': _emailController.text.trim(),
-        'fechaUltimoPeriodo': Timestamp.fromDate(_fechaUltimoPeriodo!),
+        'fechaUltimoPeriodo': _fechaUltimoPeriodo,
         'periodDuration': _selectedDuration,
         'createdAt': FieldValue.serverTimestamp(),
       });

@@ -102,10 +102,10 @@ class PeriodService {
       }
 
       // Guardar la fecha del próximo periodo en Firestore
-      await _firestore.collection('users').doc(userId).collection('periodHistory').add({
-  'predictedStart': predictedPeriodDate,
-  'savedAt': FieldValue.serverTimestamp(),
-});
+      await _firestore.collection('users').doc(userId).update({
+        'nextPeriodDate': predictedPeriodDate,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     }
   }
 
@@ -144,10 +144,9 @@ class PeriodService {
   Future<Map<String, dynamic>?> getCurrentPrediction(String userId) async {
     final doc = await _firestore.collection('users').doc(userId).get();
 
-final data = doc.data();
-if (data == null || !data.containsKey('fechaUltimoPeriodo')) return null;
+    if (!doc.exists || !doc.data()!.containsKey('fechaUltimoPeriodo')) return null;
 
-    
+    final data = doc.data()!;
     final lastPeriod = (data['fechaUltimoPeriodo'] as Timestamp).toDate();
     final cycleDuration = data['periodDuration'] ?? 28;
     final durationDays = 5;
